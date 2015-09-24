@@ -2131,7 +2131,7 @@ install_ubuntu_git_post() {
 
             update-rc.d salt-$fname defaults
         else
-            echoerror "Neither upstart not init.d was setup for salt-$fname"
+            echoerror "Neither upstart nor init.d was setup for salt-$fname"
         fi
     done
 }
