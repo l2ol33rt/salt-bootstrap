@@ -25,6 +25,8 @@ __ScriptName="bootstrap-salt.sh"
 #----------------------------------------------------------------------------------------------------------------------
 #   * BS_COLORS:                If 0 disables colour support
 #   * BS_PIP_ALLOWED:           If 1 enable pip based installations(if needed)
+#   * BS_PIP_ALL:               If 1 enable all python packages to be installed via pip instead of apt
+#   * BS_INSTALL_2_VIRTUALENV:  If 1 enable salt and pip packages to be installed into virtualenv
 #   * BS_ECHO_DEBUG:            If 1 enable debug echo which can also be set by -D
 #   * BS_SALT_ETC_DIR:          Defaults to /etc/salt (Only tweak'able on git based installations)
 #   * BS_KEEP_TEMP_FILES:       If 1, don't move temporary files, instead copy them
@@ -195,10 +197,12 @@ _INSTALL_MASTER=$BS_FALSE
 _INSTALL_SYNDIC=$BS_FALSE
 _INSTALL_MINION=$BS_TRUE
 _INSTALL_CLOUD=$BS_FALSE
+_INSTALL_2_VIRTUALENV=${BS_INSTALL_2_VIRTUALENV:-"null"}
 _START_DAEMONS=$BS_TRUE
 _ECHO_DEBUG=${BS_ECHO_DEBUG:-$BS_FALSE}
 _CONFIG_ONLY=$BS_FALSE
 _PIP_ALLOWED=${BS_PIP_ALLOWED:-$BS_FALSE}
+_PIP_ALL=${BS_PIP_ALL:-$BS_FALSE}
 _SALT_ETC_DIR=${BS_SALT_ETC_DIR:-/etc/salt}
 _PKI_DIR=${_SALT_ETC_DIR}/pki
 _FORCE_OVERWRITE=${BS_FORCE_OVERWRITE:-$BS_FALSE}
@@ -304,12 +308,15 @@ usage() {
         step.
     -f  Force shallow cloning for git installations.
         This may result in an "n/a" in the version number.
+    -V  Install salt into virtualenv (Assumes -P)(Only available for Ubuntu base distributions)
+    -a  Install all python pkg dependencies for salt via pip (Assumes -P). If combined with -V it will install all
+        dependencies into the virtualenv(Only available for Ubuntu base distributions)
 
 EOT
 }   # ----------  end of function usage  ----------
 
 
-while getopts ":hvnDc:Gg:k:MSNXCPFUKIA:i:Lp:dH:Zbsf" opt
+while getopts ":hvV:nDc:Gg:k:MSNXCPFUKIA:i:Lp:dH:Zbsfa" opt
 do
   case "${opt}" in
 
@@ -345,6 +352,14 @@ do
          fi
          ;;
     s )  __DEFAULT_SLEEP="$OPTARG"                      ;;
+    V )  _INSTALL_2_VIRTUALENV="$OPTARG"
+         if [ -d "$_INSTALL_2_VIRTUALENV" ]; then
+             echoerror "The directory ${_INSTALL_2_VIRTUALENV} for virtualenv already exists"
+             exit 1
+         fi
+         _PIP_ALLOWED=$BS_TRUE
+         ;;
+    a )  _PIP_ALL=$BS_TRUE                              ;;
     M )  _INSTALL_MASTER=$BS_TRUE                       ;;
     S )  _INSTALL_SYNDIC=$BS_TRUE                       ;;
     N )  _INSTALL_MINION=$BS_FALSE                      ;;
@@ -441,6 +456,10 @@ if [ "$ITYPE" = "git" ]; then
     fi
 # If doing stable install, check if version specified
 elif [ "$ITYPE" = "stable" ]; then
+    if [ "$_PIP_ALL" = $BS_TRUE ]; then
+        echoerror "pip installing all python packages with -a is only possible when installing salt via git"
+        exit 1
+    fi
     if [ "$#" -eq 0 ];then
         STABLE_REV="latest"
     else
@@ -452,6 +471,11 @@ elif [ "$ITYPE" = "stable" ]; then
           STABLE_REV="$1"
           shift
         fi
+    fi
+else
+    if [ "$_PIP_ALL" = $BS_TRUE ]; then
+        echoerror "pip installing all python packages with -a is only possible when installing salt via git"
+        exit 1
     fi
 fi
 
@@ -1239,6 +1263,17 @@ if [ "${ITYPE}" = "testing" ]; then
     _EPEL_REPO="epel-testing"
 fi
 
+# Only Ubuntu has support for installing to virtualenvs
+if ([ "${DISTRO_NAME_L}" != "ubuntu" ] && [ "$_INSTALL_2_VIRTUALENV" != "null" ]); then
+    echoerror "${DISTRO_NAME} does not have -V support"
+    exit 1
+fi
+
+# Only Ubuntu has support for pip installing all packages
+if ([ "${DISTRO_NAME_L}" != "ubuntu" ] && [ "$_PIP_ALL" != $BS_FALSE ]);then
+    echoerror "${DISTRO_NAME} does not have -a support"
+    exit 1
+fi
 #---  FUNCTION  -------------------------------------------------------------------------------------------------------
 #          NAME:  __function_defined
 #   DESCRIPTION:  Checks if a function is defined within this scripts scope
@@ -1748,6 +1783,40 @@ __check_services_openbsd() {
 }   # ----------  end of function __check_services_openbsd  ----------
 
 
+#---  FUNCTION  -------------------------------------------------------------------------------------------------------
+#          NAME:  __create_virtualenv
+#   DESCRIPTION:  Return 0 or 1 depending on successful creation of virtualenv
+#----------------------------------------------------------------------------------------------------------------------
+__create_virtualenv() {
+    if [ ! -d "$_INSTALL_2_VIRTUALENV" ]; then
+        echoinfo "Creating virtualenv ${_INSTALL_2_VIRTUALENV}"
+        if [ "$_PIP_ALL" = $BS_TRUE ]; then
+            virtualenv --no-site-packages ${_INSTALL_2_VIRTUALENV} || return 1
+        else
+            virtualenv --system-site-packages ${_INSTALL_2_VIRTUALENV} || return 1
+        fi
+    fi
+    return 0
+}   # ----------  end of function __create_virtualenv  ----------
+
+
+#---  FUNCTION  -------------------------------------------------------------------------------------------------------
+#          NAME:  __activate_virtualenv
+#   DESCRIPTION:  Return 0 or 1 depending on successful activation of virtualenv
+#----------------------------------------------------------------------------------------------------------------------
+__activate_virtualenv() {
+    set +o nounset
+    # Is virtualenv empty
+    if [ -z "$VIRTUAL_ENV" ]; then
+        __create_virtualenv || return 1
+        . ${_INSTALL_2_VIRTUALENV}/bin/activate || return 1
+        echoinfo "Activated virtualenv ${_INSTALL_2_VIRTUALENV}"
+    fi
+    set -o nounset
+    return 0
+}   # ----------  end of function __activate_virtualenv  ----------
+
+
 #######################################################################################################################
 #
 #   Distribution install functions
@@ -1853,6 +1922,28 @@ __enable_universe_repository() {
     return 0
 }
 
+
+install_pip_deps() {
+    # Install virtualenv to system pip before activating virtualenv if thats going to be used
+    if [ "$_INSTALL_2_VIRTUALENV" != "null" ]; then
+        pip install -U virtualenv
+        __activate_virtualenv || return 1
+    fi
+
+    __PIP_PACKAGES=""
+
+    if [ "$_INSTALL_CLOUD" -eq $BS_TRUE ]; then
+        # shellcheck disable=SC2089
+        __PIP_PACKAGES="${__PIP_PACKAGES} 'apache-libcloud>=$_LIBCLOUD_MIN_VERSION'"
+    fi
+
+    __PIP_PACKAGES="apt-wrapper requests pyyaml m2crypto pycrypto msgpack-python pyzmq jinja2"
+
+    # shellcheck disable=SC2086,SC2090
+    pip install -U ${__PIP_PACKAGES}
+}
+
+
 install_ubuntu_deps() {
     if ([ "${__DEFAULT_SLEEP}" -eq "${__DEFAULT_SLEEP_ORIGINAL}" ] && [ "$DISTRO_MAJOR_VERSION" -lt 15 ]); then
         # The user did not pass a custom sleep value as an argument, let's increase the default value
@@ -1911,6 +2002,9 @@ install_ubuntu_deps() {
     # Minimal systems might not have upstart installed, install it
     __PACKAGES="upstart"
 
+    if [ "$_INSTALL_2_VIRTUALENV" != "null" ]; then
+        __PACKAGES="${__PACKAGES} python-virtualenv"
+    fi
     # Need python-apt for managing packages via Salt
     __PACKAGES="${__PACKAGES} python-apt"
 
@@ -1919,7 +2013,6 @@ install_ubuntu_deps() {
 
     # Additionally install procps and pciutils which allows for Docker boostraps. See 366#issuecomment-39666813
     __PACKAGES="${__PACKAGES} procps pciutils"
-
 
     if [ "$_INSTALL_CLOUD" -eq $BS_TRUE ]; then
         check_pip_allowed "You need to allow pip based installations (-P) in order to install 'apache-libcloud'"
@@ -1995,6 +2088,14 @@ install_ubuntu_stable_deps() {
         else
             add-apt-repository "ppa:$STABLE_PPA" || return 1
         fi
+        __PACKAGES="${__PACKAGES} python-dev"
+        # shellcheck disable=SC2086
+        __apt_get_install_noinput $__PACKAGES
+        # Activate virtualenv before install
+        if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
+            __activate_virtualenv || return 1
+        fi
+        pip install -U "${__REQUIRED_TORNADO}"
     fi
 
     apt-get update
@@ -2029,9 +2130,22 @@ install_ubuntu_daily_deps() {
 }
 
 install_ubuntu_git_deps() {
-    install_ubuntu_deps || return 1
-    __apt_get_install_noinput git-core python-yaml python-m2crypto python-crypto \
-        msgpack-python python-zmq python-jinja2 || return 1
+    # See how we are installing all pip packages
+    if [ "${_PIP_ALL}" = $BS_TRUE ]; then
+        __PACKAGES="python-dev git-core swig libssl-dev libzmq3 libzmq3-dev"
+        check_pip_allowed "You need to allow pip based installations (-P) in order to install pip"
+        if [ "$(which pip)" = "" ]; then
+            __PACKAGES="${__PACKAGES} python-setuptools python-pip"
+        fi
+        # Get just the apt packages that are required to build all the pythons
+        __apt_get_install_noinput $__PACKAGES || return 1
+        # Install the pythons
+        install_pip_deps || return 1
+    else
+        install_ubuntu_deps || return 1
+        __apt_get_install_noinput git-core python-yaml python-m2crypto python-crypto \
+            msgpack-python python-zmq python-jinja2 || return 1
+    fi
 
     __git_clone_and_checkout || return 1
 
@@ -2047,6 +2161,9 @@ install_ubuntu_git_deps() {
             fi
             # shellcheck disable=SC2086
             __apt_get_install_noinput $__PACKAGES
+            if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
+                __activate_virtualenv || return 1
+            fi
             pip install -U "${__REQUIRED_TORNADO}"
         fi
     fi
@@ -2082,6 +2199,11 @@ install_ubuntu_daily() {
 }
 
 install_ubuntu_git() {
+    # Activate virtualenv before install
+    if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
+        __activate_virtualenv || return 1
+    fi
+
     if [ -f "${__SALT_GIT_CHECKOUT_DIR}/salt/syspaths.py" ]; then
         python setup.py --salt-config-dir="$_SALT_ETC_DIR" install --install-layout=deb || return 1
     else
@@ -2117,6 +2239,10 @@ install_ubuntu_git_post() {
                 echowarn "Upstart does not appear to know about salt-$fname"
                 echodebug "Copying ${__SALT_GIT_CHECKOUT_DIR}/pkg/salt-$fname.upstart to $_upstart_conf"
                 copyfile "${__SALT_GIT_CHECKOUT_DIR}/pkg/salt-${fname}.upstart" $_upstart_conf
+                # Set service to know about virtualenv
+                if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
+                    echo "SALT_USE_VIRTUALENV=${_INSTALL_2_VIRTUALENV}" > /etc/default/salt-${fname}
+                fi
                 /sbin/initctl reload-configuration || return 1
             fi
         # No upstart support in Ubuntu!?
@@ -2124,6 +2250,10 @@ install_ubuntu_git_post() {
             echodebug "There's NO upstart support!?"
             echodebug "Copying ${__SALT_GIT_CHECKOUT_DIR}/debian/salt-${fname}.init to /etc/init.d/salt-$fname"
             copyfile "${__SALT_GIT_CHECKOUT_DIR}/debian/salt-${fname}.init" "/etc/init.d/salt-$fname"
+            # Set service to know about virtualenv
+            if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
+                echo "SALT_USE_VIRTUALENV=${_INSTALL_2_VIRTUALENV}" > /etc/default/salt-${fname}
+            fi
             chmod +x /etc/init.d/salt-$fname
 
             # Skip salt-api since the service should be opt-in and not necessarily started on boot
