@@ -187,6 +187,7 @@ _INSTALL_MASTER=$BS_FALSE
 _INSTALL_SYNDIC=$BS_FALSE
 _INSTALL_MINION=$BS_TRUE
 _INSTALL_CLOUD=$BS_FALSE
+_INSTALL_2_VIRTUALENV=$BS_FALSE
 _START_DAEMONS=$BS_TRUE
 _ECHO_DEBUG=${BS_ECHO_DEBUG:-$BS_FALSE}
 _CONFIG_ONLY=$BS_FALSE
@@ -286,12 +287,13 @@ usage() {
   -Z  Enable external software source for newer ZeroMQ(Only available for RHEL/CentOS/Fedora/Ubuntu based distributions)
   -b  Assume that dependencies are already installed and software sources are set up.
       If git is selected, git tree is still checked out as dependency step.
+  -V  Install salt into virtualenv (Assumes -P)
 
 EOT
 }   # ----------  end of function usage  ----------
 
 
-while getopts ":hvnDc:Gg:k:MSNXCPFUKIA:i:Lp:dH:Zb" opt
+while getopts ":hvV:nDc:Gg:k:MSNXCPFUKIA:i:Lp:dH:Zb" opt
 do
   case "${opt}" in
 
@@ -325,6 +327,13 @@ do
              echoerror "The pre-seed keys directory ${_TEMP_KEYS_DIR} does not exist."
              exit 1
          fi
+         ;;
+    V )  _INSTALL_2_VIRTUALENV="$OPTARG"
+         if [ -d "$_INSTALL_2_VIRTUALENV" ]; then
+             echoerror "The directory ${_INSTALL_2_VIRTUALENV} for virtualenv already exists"
+             exit 1
+         fi
+         _PIP_ALLOWED=$BS_TRUE
          ;;
     M )  _INSTALL_MASTER=$BS_TRUE                       ;;
     S )  _INSTALL_SYNDIC=$BS_TRUE                       ;;
@@ -1626,6 +1635,25 @@ __check_services_debian() {
     fi
 }   # ----------  end of function __check_services_debian  ----------
 
+__create_virtualenv() {
+    if [ ! -d "$_INSTALL_2_VIRTUALENV" ]; then
+        echoinfo "Creating virtualenv ${_INSTALL_2_VIRTUALENV}"
+        virtualenv --no-site-packages ${_INSTALL_2_VIRTUALENV} || return 1
+    fi
+    return 0
+}
+
+__activate_virtualenv() {
+    set +o nounset
+    # Is virtualenv empty
+    if [ -z "$VIRTUAL_ENV" ]; then
+        __create_virtualenv || return 1
+        . ${_INSTALL_2_VIRTUALENV}/bin/activate || return 1
+        echoinfo "Activated virtualenv ${_INSTALL_2_VIRTUALENV}"
+    fi
+    set -o nounset
+    return 0
+}
 
 #######################################################################################################################
 #
@@ -1762,26 +1790,31 @@ install_ubuntu_deps() {
     # Minimal systems might not have upstart installed, install it
     __PACKAGES="upstart"
 
-    # Need python-apt for managing packages via Salt
-    __PACKAGES="${__PACKAGES} python-apt"
+    # See if we are installing into a virtualenv
+    if [ "$_INSTALL_2_VIRTUALENV" = $BS_FALSE ]; then
+        # Need python-apt for managing packages via Salt
+        __PACKAGES="${__PACKAGES} python-apt"
 
-    if [ "$DISTRO_MAJOR_VERSION" -lt 14 ]; then
-        echoinfo "Installing Python Requests/Chardet from Chris Lea's PPA repository"
-        if [ "$DISTRO_MAJOR_VERSION" -gt 11 ] || ([ "$DISTRO_MAJOR_VERSION" -eq 11 ] && [ "$DISTRO_MINOR_VERSION" -gt 04 ]); then
-            # Above Ubuntu 11.04 add a -y flag
-            add-apt-repository -y "ppa:chris-lea/python-requests" || return 1
-            add-apt-repository -y "ppa:chris-lea/python-chardet" || return 1
-            add-apt-repository -y "ppa:chris-lea/python-urllib3" || return 1
-            add-apt-repository -y "ppa:chris-lea/python-crypto" || return 1
-        else
-            add-apt-repository "ppa:chris-lea/python-requests" || return 1
-            add-apt-repository "ppa:chris-lea/python-chardet" || return 1
-            add-apt-repository "ppa:chris-lea/python-urllib3" || return 1
-            add-apt-repository "ppa:chris-lea/python-crypto" || return 1
+        if [ "$DISTRO_MAJOR_VERSION" -lt 14 ]; then
+            echoinfo "Installing Python Requests/Chardet from Chris Lea's PPA repository"
+            if [ "$DISTRO_MAJOR_VERSION" -gt 11 ] || ([ "$DISTRO_MAJOR_VERSION" -eq 11 ] && [ "$DISTRO_MINOR_VERSION" -gt 04 ]); then
+                # Above Ubuntu 11.04 add a -y flag
+                add-apt-repository -y "ppa:chris-lea/python-requests" || return 1
+                add-apt-repository -y "ppa:chris-lea/python-chardet" || return 1
+                add-apt-repository -y "ppa:chris-lea/python-urllib3" || return 1
+                add-apt-repository -y "ppa:chris-lea/python-crypto" || return 1
+            else
+                add-apt-repository "ppa:chris-lea/python-requests" || return 1
+                add-apt-repository "ppa:chris-lea/python-chardet" || return 1
+                add-apt-repository "ppa:chris-lea/python-urllib3" || return 1
+                add-apt-repository "ppa:chris-lea/python-crypto" || return 1
+            fi
         fi
+        __PACKAGES="${__PACKAGES} python-requests"
+    else
+        __PACKAGES="${__PACKAGES} python-virtualenv"
+        __PIP_PACKAGES="${__PIP_PACKAGES} apt-wrapper requests"
     fi
-
-    __PACKAGES="${__PACKAGES} python-requests"
 
     if [ "$DISTRO_MAJOR_VERSION" -gt 12 ] || ([ "$DISTRO_MAJOR_VERSION" -eq 12 ] && [ "$DISTRO_MINOR_VERSION" -gt 03 ]); then
         if ([ "$DISTRO_MAJOR_VERSION" -lt 15 ] && [ "$_ENABLE_EXTERNAL_ZMQ_REPOS" -eq $BS_TRUE ]); then
@@ -1808,8 +1841,13 @@ install_ubuntu_deps() {
     __apt_get_install_noinput ${__PACKAGES} || return 1
 
     if [ "${__PIP_PACKAGES}" != "" ]; then
+        # Activate virtualenv before install
+        if [ "${_INSTALL_2_VIRTUALENV}" != $BS_FALSE ]; then
+            __activate_virtualenv || return 1
+        fi
         # shellcheck disable=SC2086,SC2090
         pip install -U ${__PIP_PACKAGES}
+
     fi
 
     if [ "$_UPGRADE_SYS" -eq $BS_TRUE ]; then
@@ -1855,6 +1893,10 @@ install_ubuntu_stable_deps() {
         __PACKAGES="${__PACKAGES} python-dev"
         # shellcheck disable=SC2086
         __apt_get_install_noinput $__PACKAGES
+        # Activate virtualenv before install
+        if [ "${_INSTALL_2_VIRTUALENV}" != $BS_FALSE ]; then
+            __activate_virtualenv || return 1
+        fi
         pip install -U "${__REQUIRED_TORNADO}"
     fi
 
@@ -1891,8 +1933,19 @@ install_ubuntu_daily_deps() {
 
 install_ubuntu_git_deps() {
     install_ubuntu_deps || return 1
-    __apt_get_install_noinput git-core python-yaml python-m2crypto python-crypto \
-        msgpack-python python-zmq python-jinja2 || return 1
+    # Activate virtualenv before install
+    if [ "${_INSTALL_2_VIRTUALENV}" != $BS_FALSE ]; then
+        __activate_virtualenv || return 1
+        if [ "$(which pip)" = "" ]; then
+            __PACKAGES="${__PACKAGES} python-setuptools python-pip"
+        fi
+        __PACKAGES="${__PACKAGES} python-dev git-core swig libssl-dev libzmq3 libzmq3-dev"
+        __apt_get_install_noinput $__PACKAGES
+        pip install -U pyyaml m2crypto pycrypto msgpack-python pyzmq jinja2
+    else
+        __apt_get_install_noinput git-core python-yaml python-m2crypto python-crypto \
+            msgpack-python python-zmq python-jinja2 || return 1
+    fi
 
     __git_clone_and_checkout || return 1
 
@@ -1943,6 +1996,11 @@ install_ubuntu_daily() {
 }
 
 install_ubuntu_git() {
+    # Activate virtualenv before install
+    if [ "${_INSTALL_2_VIRTUALENV}" != $BS_FALSE ]; then
+        __activate_virtualenv || return 1
+    fi
+
     if [ -f "${__SALT_GIT_CHECKOUT_DIR}/salt/syspaths.py" ]; then
         python setup.py install --install-layout=deb --salt-config-dir="$_SALT_ETC_DIR" || \
             python setup.py --salt-config-dir="$_SALT_ETC_DIR" install --install-layout=deb || return 1
@@ -1979,12 +2037,20 @@ install_ubuntu_git_post() {
                 echowarn "Upstart does not appear to know about salt-$fname"
                 echodebug "Copying ${__SALT_GIT_CHECKOUT_DIR}/pkg/salt-$fname.upstart to $_upstart_conf"
                 copyfile "${__SALT_GIT_CHECKOUT_DIR}/pkg/salt-${fname}.upstart" $_upstart_conf
+                # Set service to know about virtualenv
+                if [ "${_INSTALL_2_VIRTUALENV}" != $BS_FALSE ]; then
+                    echo "SALT_USE_VIRTUALENV=${_INSTALL_2_VIRTUALENV}" > /etc/default/salt-${fname}
+                fi
             fi
         # No upstart support in Ubuntu!?
         elif [ -f "${__SALT_GIT_CHECKOUT_DIR}/debian/salt-${fname}.init" ]; then
             echodebug "There's NO upstart support!?"
             echodebug "Copying ${__SALT_GIT_CHECKOUT_DIR}/debian/salt-${fname}.init to /etc/init.d/salt-$fname"
             copyfile "${__SALT_GIT_CHECKOUT_DIR}/debian/salt-${fname}.init" "/etc/init.d/salt-$fname"
+            # Set service to know about virtualenv
+            if [ "${_INSTALL_2_VIRTUALENV}" != $BS_FALSE ]; then
+                echo "SALT_USE_VIRTUALENV=${_INSTALL_2_VIRTUALENV}" > /etc/default/salt-${fname}
+            fi
             chmod +x /etc/init.d/salt-$fname
 
             # Skip salt-api since the service should be opt-in and not necessarily started on boot
