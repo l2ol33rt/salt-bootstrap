@@ -311,13 +311,13 @@ do
              exit 1
          fi
          ;;
-    g ) _SALT_REPO_URL=$OPTARG                          ;;
-    G ) if [ "${_SALT_REPO_URL}" = "${_SALTSTACK_REPO_URL}" ]; then
-            _SALTSTACK_REPO_URL="https://github.com/saltstack/salt.git"
-            _SALT_REPO_URL=${_SALTSTACK_REPO_URL}
-        else
-            _SALTSTACK_REPO_URL="https://github.com/saltstack/salt.git"
-        fi
+    g )  _SALT_REPO_URL=$OPTARG                          ;;
+    G )  if [ "${_SALT_REPO_URL}" = "${_SALTSTACK_REPO_URL}" ]; then
+             _SALTSTACK_REPO_URL="https://github.com/saltstack/salt.git"
+             _SALT_REPO_URL=${_SALTSTACK_REPO_URL}
+         else
+             _SALTSTACK_REPO_URL="https://github.com/saltstack/salt.git"
+         fi
          ;;
     k )  _TEMP_KEYS_DIR="$OPTARG"
          # If the configuration directory does not exist, error out
