@@ -192,6 +192,7 @@ _START_DAEMONS=$BS_TRUE
 _ECHO_DEBUG=${BS_ECHO_DEBUG:-$BS_FALSE}
 _CONFIG_ONLY=$BS_FALSE
 _PIP_ALLOWED=${BS_PIP_ALLOWED:-$BS_FALSE}
+_PIP_ALL=$BS_FALSE
 _SALT_ETC_DIR=${BS_SALT_ETC_DIR:-/etc/salt}
 _PKI_DIR=${_SALT_ETC_DIR}/pki
 _FORCE_OVERWRITE=${BS_FORCE_OVERWRITE:-$BS_FALSE}
@@ -288,12 +289,14 @@ usage() {
   -b  Assume that dependencies are already installed and software sources are set up.
       If git is selected, git tree is still checked out as dependency step.
   -V  Install salt into virtualenv (Assumes -P)
+  -a  Install all python pkg dependencies for salt via pip (Assumes -P). If combined with -V it will install all
+      dependencies into the virtualenv.
 
 EOT
 }   # ----------  end of function usage  ----------
 
 
-while getopts ":hvV:nDc:Gg:k:MSNXCPFUKIA:i:Lp:dH:Zb" opt
+while getopts ":hvV:nDc:Gg:k:MSNXCPFUKIA:i:Lp:dH:Zba" opt
 do
   case "${opt}" in
 
@@ -335,6 +338,7 @@ do
          fi
          _PIP_ALLOWED=$BS_TRUE
          ;;
+    a )  _PIP_ALL=$BS_TRUE                             ;;
     M )  _INSTALL_MASTER=$BS_TRUE                       ;;
     S )  _INSTALL_SYNDIC=$BS_TRUE                       ;;
     N )  _INSTALL_MINION=$BS_FALSE                      ;;
@@ -1791,7 +1795,10 @@ install_ubuntu_deps() {
     __PACKAGES="upstart"
 
     # See if we are installing into a virtualenv
-    if [ "$_INSTALL_2_VIRTUALENV" = $BS_FALSE ]; then
+    if [ "$_PIP_ALL" = $BS_FALSE ]; then
+        if [ "$INSTALL_2_VIRTUALENV" != $BS_FALSE ]; then
+            __PACKAGES="${__PACKAGES} python-virtualenv"
+        fi
         # Need python-apt for managing packages via Salt
         __PACKAGES="${__PACKAGES} python-apt"
 
@@ -1812,7 +1819,10 @@ install_ubuntu_deps() {
         fi
         __PACKAGES="${__PACKAGES} python-requests"
     else
-        __PACKAGES="${__PACKAGES} python-virtualenv"
+        # Install virtualenv to system pip before activating virtualenv if thats going to be used
+        if [ "$INSTALL_2_VIRTUALENV" != $BS_FALSE ]; then
+            pip install -U virtualenv
+        fi
         __PIP_PACKAGES="${__PIP_PACKAGES} apt-wrapper requests"
     fi
 
@@ -1934,8 +1944,10 @@ install_ubuntu_daily_deps() {
 install_ubuntu_git_deps() {
     install_ubuntu_deps || return 1
     # Activate virtualenv before install
-    if [ "${_INSTALL_2_VIRTUALENV}" != $BS_FALSE ]; then
-        __activate_virtualenv || return 1
+    if [ "${_PIP_ALL}" = $BS_TRUE ]; then
+        if [ "${_INSTALL_2_VIRTUALENV}" != $BS_FALSE ]; then
+            __activate_virtualenv || return 1
+        fi
         if [ "$(which pip)" = "" ]; then
             __PACKAGES="${__PACKAGES} python-setuptools python-pip"
         fi
@@ -1961,6 +1973,9 @@ install_ubuntu_git_deps() {
             fi
             # shellcheck disable=SC2086
             __apt_get_install_noinput $__PACKAGES
+            if [ "${_INSTALL_2_VIRTUALENV}" != $BS_FALSE ]; then
+                __activate_virtualenv || return 1
+            fi
             pip install -U "${__REQUIRED_TORNADO}"
         fi
     fi
