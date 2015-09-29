@@ -1796,7 +1796,7 @@ install_ubuntu_deps() {
 
     # See if we are installing into a virtualenv
     if [ "$_PIP_ALL" = $BS_FALSE ]; then
-        if [ "$INSTALL_2_VIRTUALENV" != $BS_FALSE ]; then
+        if [ "$_INSTALL_2_VIRTUALENV" != $BS_FALSE ]; then
             __PACKAGES="${__PACKAGES} python-virtualenv"
         fi
         # Need python-apt for managing packages via Salt
@@ -1820,7 +1820,7 @@ install_ubuntu_deps() {
         __PACKAGES="${__PACKAGES} python-requests"
     else
         # Install virtualenv to system pip before activating virtualenv if thats going to be used
-        if [ "$INSTALL_2_VIRTUALENV" != $BS_FALSE ]; then
+        if [ "$_INSTALL_2_VIRTUALENV" != $BS_FALSE ]; then
             pip install -U virtualenv
         fi
         __PIP_PACKAGES="${__PIP_PACKAGES} apt-wrapper requests"
