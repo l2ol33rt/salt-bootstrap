@@ -1696,6 +1696,40 @@ __activate_virtualenv() {
 }   # ----------  end of function __activate_virtualenv  ----------
 
 
+#---  FUNCTION  -------------------------------------------------------------------------------------------------------
+#          NAME:  __install_pip_deps
+#   DESCRIPTION:  Return 0 or 1 if successfully able to install pip packages via requirements file
+#    PARAMETERS:  requirements_files
+#----------------------------------------------------------------------------------------------------------------------
+__install_pip_deps() {
+    # Install virtualenv to system pip before activating virtualenv if thats going to be used
+    # We assume pip pkg is installed since that is distro specific
+    if [ "$_INSTALL_2_VIRTUALENV" != "null" ]; then
+        if [ "$(which pip)" = "" ]; then
+            echoerror "Pip not installed: required for -a (pip pkg) installs"
+            exit 1
+        fi
+            pip install -U virtualenv
+        __activate_virtualenv || return 1
+    fi
+
+    requirements_file=$1
+    if [ ! -f "${requirements_file}" ]; then
+        echoerror "Requirements file: ${requirements_file} does not exist, needed for -a (pip pkg) installs"
+        exit 1
+    fi
+
+    __PIP_PACKAGES=''
+    if [ "$_INSTALL_CLOUD" -eq $BS_TRUE ]; then
+        # shellcheck disable=SC2089
+        __PIP_PACKAGES="${__PIP_PACKAGES} 'apache-libcloud>=$_LIBCLOUD_MIN_VERSION'"
+    fi
+
+    # shellcheck disable=SC2086,SC2090
+    pip install -U -r ${requirements_file} ${__PIP_PACKAGES}
+}
+
+
 #######################################################################################################################
 #
 #   Distribution install functions
@@ -1800,27 +1834,6 @@ __enable_universe_repository() {
 }
 
 
-install_pip_deps() {
-    # Install virtualenv to system pip before activating virtualenv if thats going to be used
-    if [ "$_INSTALL_2_VIRTUALENV" != "null" ]; then
-        pip install -U virtualenv
-        __activate_virtualenv || return 1
-    fi
-
-    __PIP_PACKAGES=""
-
-    if [ "$_INSTALL_CLOUD" -eq $BS_TRUE ]; then
-        # shellcheck disable=SC2089
-        __PIP_PACKAGES="${__PIP_PACKAGES} 'apache-libcloud>=$_LIBCLOUD_MIN_VERSION'"
-    fi
-
-    __PIP_PACKAGES="apt-wrapper requests pyyaml m2crypto pycrypto msgpack-python pyzmq jinja2"
-
-    # shellcheck disable=SC2086,SC2090
-    pip install -U ${__PIP_PACKAGES}
-}
-
-
 install_ubuntu_deps() {
     if ([ "${__DEFAULT_SLEEP}" -eq "${__DEFAULT_SLEEP_ORIGINAL}" ] && [ "$DISTRO_MAJOR_VERSION" -lt 15 ]); then
         # The user did not pass a custom sleep value as an argument, let's increase the default value
@@ -1899,6 +1912,9 @@ install_ubuntu_deps() {
 
     if [ "${__PIP_PACKAGES}" != "" ]; then
         # shellcheck disable=SC2086,SC2090
+        if [ "$_INSTALL_2_VIRTUALENV" != "null" ]; then
+            __activate_virtualenv
+        fi
         pip install -U ${__PIP_PACKAGES}
     fi
 
@@ -1983,41 +1999,40 @@ install_ubuntu_daily_deps() {
 }
 
 install_ubuntu_git_deps() {
-    # See how we are installing all pip packages
+    __apt_get_install_noinput git-core || return 1
+    __git_clone_and_checkout || return 1
+
+    __PACKAGES=""
+    # See how we are installing packages
     if [ "${_PIP_ALL}" = $BS_TRUE ]; then
-        __PACKAGES="python-dev git-core swig libssl-dev libzmq3 libzmq3-dev"
-        check_pip_allowed "You need to allow pip based installations (-P) in order to install pip"
+        __PACKAGES="python-dev swig libssl-dev libzmq3 libzmq3-dev"
         if [ "$(which pip)" = "" ]; then
             __PACKAGES="${__PACKAGES} python-setuptools python-pip"
         fi
         # Get just the apt packages that are required to build all the pythons
         __apt_get_install_noinput $__PACKAGES || return 1
-        # Install the pythons
-        install_pip_deps || return 1
+        # Install the pythons from requirements (only zmq for now)
+        install_pip_deps "${__SALT_GIT_CHECKOUT_DIR}/requirements/zeromq.txt" || return 1
     else
         install_ubuntu_deps || return 1
-        __apt_get_install_noinput git-core python-yaml python-m2crypto python-crypto \
+        __apt_get_install_noinput python-yaml python-m2crypto python-crypto \
             msgpack-python python-zmq python-jinja2 || return 1
-    fi
-
-    __git_clone_and_checkout || return 1
-
-    __PACKAGES=""
-    if [ -f "${__SALT_GIT_CHECKOUT_DIR}/requirements/base.txt" ]; then
-        # We're on the develop branch, install whichever tornado is on the requirements file
-        __REQUIRED_TORNADO="$(grep tornado "${__SALT_GIT_CHECKOUT_DIR}/requirements/base.txt")"
-        if [ "${__REQUIRED_TORNADO}" != "" ]; then
-            __PACKAGES="${__PACKAGES} python-dev"
-            check_pip_allowed "You need to allow pip based installations (-P) in order to install the python package '${__REQUIRED_TORNADO}'"
-            if [ "$(which pip)" = "" ]; then
-                __PACKAGES="${__PACKAGES} python-setuptools python-pip"
+        if [ -f "${__SALT_GIT_CHECKOUT_DIR}/requirements/base.txt" ]; then
+            # We're on the develop branch, install whichever tornado is on the requirements file
+            __REQUIRED_TORNADO="$(grep tornado "${__SALT_GIT_CHECKOUT_DIR}/requirements/base.txt")"
+            if [ "${__REQUIRED_TORNADO}" != "" ]; then
+                __PACKAGES="${__PACKAGES} python-dev"
+                check_pip_allowed "You need to allow pip based installations (-P) in order to install the python package '${__REQUIRED_TORNADO}'"
+                if [ "$(which pip)" = "" ]; then
+                    __PACKAGES="${__PACKAGES} python-setuptools python-pip"
+                fi
+                # shellcheck disable=SC2086
+                __apt_get_install_noinput $__PACKAGES || return 1
+                if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
+                    __activate_virtualenv || return 1
+                fi
+                pip install -U "${__REQUIRED_TORNADO}"
             fi
-            # shellcheck disable=SC2086
-            __apt_get_install_noinput $__PACKAGES
-            if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
-                __activate_virtualenv || return 1
-            fi
-            pip install -U "${__REQUIRED_TORNADO}"
         fi
     fi
 
