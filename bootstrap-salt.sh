@@ -452,7 +452,7 @@ if [ "$ITYPE" = "git" ]; then
     fi
 # If doing stable install, check if version specified
 elif [ "$ITYPE" = "stable" ]; then
-    if [ "$_PIP_ALL" = $BS_TRUE ]; then
+    if [ $_PIP_ALL -eq $BS_TRUE ]; then
         echoerror "pip installing all python packages with -a is only possible when installing salt via git"
         exit 1
     fi
@@ -469,7 +469,7 @@ elif [ "$ITYPE" = "stable" ]; then
         fi
     fi
 else
-    if [ "$_PIP_ALL" = $BS_TRUE ]; then
+    if [ $_PIP_ALL -eq $BS_TRUE ]; then
         echoerror "pip installing all python packages with -a is only possible when installing salt via git"
         exit 1
     fi
@@ -1279,7 +1279,7 @@ if ([ "${DISTRO_NAME_L}" != "ubuntu" ] && [ "$_INSTALL_2_VIRTUALENV" != "null" ]
 fi
 
 # Only Ubuntu has support for pip installing all packages
-if ([ "${DISTRO_NAME_L}" != "ubuntu" ] && [ "$_PIP_ALL" != $BS_FALSE ]);then
+if ([ "${DISTRO_NAME_L}" != "ubuntu" ] && [ $_PIP_ALL -eq $BS_TRUE ]);then
     echoerror "${DISTRO_NAME} does not have -a support"
     exit 1
 fi
@@ -1799,7 +1799,7 @@ __check_services_openbsd() {
 __create_virtualenv() {
     if [ ! -d "$_INSTALL_2_VIRTUALENV" ]; then
         echoinfo "Creating virtualenv ${_INSTALL_2_VIRTUALENV}"
-        if [ "$_PIP_ALL" = $BS_TRUE ]; then
+        if [ $_PIP_ALL -eq $BS_TRUE ]; then
             virtualenv --no-site-packages ${_INSTALL_2_VIRTUALENV} || return 1
         else
             virtualenv --system-site-packages ${_INSTALL_2_VIRTUALENV} || return 1
@@ -2160,7 +2160,7 @@ install_ubuntu_git_deps() {
 
     __PACKAGES=""
     # See how we are installing packages
-    if [ "${_PIP_ALL}" = $BS_TRUE ]; then
+    if [ ${_PIP_ALL} -eq $BS_TRUE ]; then
         __PACKAGES="python-dev swig libssl-dev libzmq3 libzmq3-dev"
         if ! __check_command_exists pip; then
             __PACKAGES="${__PACKAGES} python-setuptools python-pip"
