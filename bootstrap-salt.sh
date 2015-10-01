@@ -25,8 +25,8 @@ __ScriptName="bootstrap-salt.sh"
 #----------------------------------------------------------------------------------------------------------------------
 #   * BS_COLORS:                If 0 disables colour support
 #   * BS_PIP_ALLOWED:           If 1 enable pip based installations(if needed)
-#   * BS_PIP_ALL:               If 1 enable all python packages to be installed via pip instead of apt
-#   * BS_INSTALL_2_VIRTUALENV:  If 1 enable salt and pip packages to be installed into virtualenv
+#   * BS_PIP_ALL:               If 1 enable all python packages to be installed via pip instead of apt, requires setting virtualenv
+#   * BS_VIRTUALENV_DIR:        The virtualenv to install salt into (shouldn't exist yet)
 #   * BS_ECHO_DEBUG:            If 1 enable debug echo which can also be set by -D
 #   * BS_SALT_ETC_DIR:          Defaults to /etc/salt (Only tweak'able on git based installations)
 #   * BS_KEEP_TEMP_FILES:       If 1, don't move temporary files, instead copy them
@@ -189,7 +189,7 @@ _INSTALL_MASTER=$BS_FALSE
 _INSTALL_SYNDIC=$BS_FALSE
 _INSTALL_MINION=$BS_TRUE
 _INSTALL_CLOUD=$BS_FALSE
-_INSTALL_2_VIRTUALENV=${BS_INSTALL_2_VIRTUALENV:-"null"}
+_VIRTUALENV_DIR=${BS_VIRTUALENV_DIR:-"null"}
 _START_DAEMONS=$BS_TRUE
 _ECHO_DEBUG=${BS_ECHO_DEBUG:-$BS_FALSE}
 _CONFIG_ONLY=$BS_FALSE
@@ -291,15 +291,15 @@ usage() {
   -b  Assume that dependencies are already installed and software sources are set up.
       If git is selected, git tree is still checked out as dependency step.
   -V  Install salt into virtualenv(Only available for Ubuntu base distributions)
-  -a  Install all python pkg dependencies for salt via pip. Requires -V to
-      install all pip pkgs into the virtualenv(Only available for Ubuntu base
+  -a  Pip install all python pkg dependencies for salt. Requires -V to install
+      all pip pkgs into the virtualenv(Only available for Ubuntu base
       distributions)
 
 EOT
 }   # ----------  end of function usage  ----------
 
 
-while getopts ":hvV:nDc:Gg:k:MSNXCPFUKIA:i:Lp:dH:Zba" opt
+while getopts ":hvnDc:Gg:k:MSNXCPFUKIA:i:Lp:dH:ZbV:a" opt
 do
   case "${opt}" in
 
@@ -334,9 +334,7 @@ do
              exit 1
          fi
          ;;
-    V )  _INSTALL_2_VIRTUALENV="$OPTARG"
-
-         ;;
+    V )  _VIRTUALENV_DIR="$OPTARG"                      ;;
     a )  _PIP_ALL=$BS_TRUE                              ;;
     M )  _INSTALL_MASTER=$BS_TRUE                       ;;
     S )  _INSTALL_SYNDIC=$BS_TRUE                       ;;
@@ -438,10 +436,6 @@ if [ "$ITYPE" = "git" ]; then
     fi
 # If doing stable install, check if version specified
 elif [ "$ITYPE" = "stable" ]; then
-    if [ $_PIP_ALL -eq $BS_TRUE ]; then
-        echoerror "pip installing all python packages with -a is only possible when installing salt via git"
-        exit 1
-    fi
     if [ "$#" -eq 0 ];then
         STABLE_REV="latest"
     else
@@ -454,9 +448,16 @@ elif [ "$ITYPE" = "stable" ]; then
           shift
         fi
     fi
-else
+fi
+
+# -a and -V only work from git
+if [ "$ITYPE" != "git" ]; then
     if [ $_PIP_ALL -eq $BS_TRUE ]; then
-        echoerror "pip installing all python packages with -a is only possible when installing salt via git"
+        echoerror "Pip installing all python packages with -a is only possible when installing salt via git"
+        exit 1
+    fi
+    if [ $_VIRTUALENV_DIR != "null" ]; then
+        echoerror "Virtualenv installs via -V is only possible when installing salt via git"
         exit 1
     fi
 fi
@@ -504,15 +505,16 @@ if [ ${_DISABLE_SALT_CHECKS} -eq 0 ]; then
 fi
 
 # Because -a can only be installed into virtualenv
-if ([ $_PIP_ALL -eq $BS_TRUE ] && [ $_INSTALL_2_VIRTUALENV = "null" ]); then
+if ([ $_PIP_ALL -eq $BS_TRUE ] && [ $_VIRTUALENV_DIR = "null" ]); then
+    usage
     # Could possibly set up a default virtualenv location when -a flag is passed
-    echoerror "-V(virtualenv) dir required for -a (pip pkg) installs"
+    echoerror "Using -a requires -V because pip pkgs should be siloed from python system pkgs"
     exit 1
 fi
 
 # Make sure virtualenv directory does not already exist
-if [ -d "$_INSTALL_2_VIRTUALENV" ]; then
-    echoerror "The directory ${_INSTALL_2_VIRTUALENV} for virtualenv already exists"
+if [ -d "$_VIRTUALENV_DIR" ]; then
+    echoerror "The directory ${_VIRTUALENV_DIR} for virtualenv already exists"
     exit 1
 fi
 
@@ -1212,7 +1214,7 @@ if [ "${ITYPE}" = "testing" ]; then
 fi
 
 # Only Ubuntu has support for installing to virtualenvs
-if ([ "${DISTRO_NAME_L}" != "ubuntu" ] && [ "$_INSTALL_2_VIRTUALENV" != "null" ]); then
+if ([ "${DISTRO_NAME_L}" != "ubuntu" ] && [ "$_VIRTUALENV_DIR" != "null" ]); then
     echoerror "${DISTRO_NAME} does not have -V support"
     exit 1
 fi
@@ -1677,12 +1679,12 @@ __check_services_debian() {
 #   DESCRIPTION:  Return 0 or 1 depending on successful creation of virtualenv
 #----------------------------------------------------------------------------------------------------------------------
 __create_virtualenv() {
-    if [ ! -d "$_INSTALL_2_VIRTUALENV" ]; then
-        echoinfo "Creating virtualenv ${_INSTALL_2_VIRTUALENV}"
+    if [ ! -d "$_VIRTUALENV_DIR" ]; then
+        echoinfo "Creating virtualenv ${_VIRTUALENV_DIR}"
         if [ $_PIP_ALL -eq $BS_TRUE ]; then
-            virtualenv --no-site-packages ${_INSTALL_2_VIRTUALENV} || return 1
+            virtualenv --no-site-packages ${_VIRTUALENV_DIR} || return 1
         else
-            virtualenv --system-site-packages ${_INSTALL_2_VIRTUALENV} || return 1
+            virtualenv --system-site-packages ${_VIRTUALENV_DIR} || return 1
         fi
     fi
     return 0
@@ -1698,8 +1700,8 @@ __activate_virtualenv() {
     # Is virtualenv empty
     if [ -z "$VIRTUAL_ENV" ]; then
         __create_virtualenv || return 1
-        . ${_INSTALL_2_VIRTUALENV}/bin/activate || return 1
-        echoinfo "Activated virtualenv ${_INSTALL_2_VIRTUALENV}"
+        . ${_VIRTUALENV_DIR}/bin/activate || return 1
+        echoinfo "Activated virtualenv ${_VIRTUALENV_DIR}"
     fi
     set -o nounset
     return 0
@@ -1714,13 +1716,15 @@ __activate_virtualenv() {
 __install_pip_deps() {
     # Install virtualenv to system pip before activating virtualenv if thats going to be used
     # We assume pip pkg is installed since that is distro specific
-    if [ "$_INSTALL_2_VIRTUALENV" != "null" ]; then
+    if [ "$_VIRTUALENV_DIR" != "null" ]; then
         if [ "$(which pip)" = "" ]; then
-            echoerror "Pip not installed: required for -a (pip pkg) installs"
+            echoerror "Pip not installed: required for -a installs"
             exit 1
         fi
-            pip install -U virtualenv
+        pip install -U virtualenv
         __activate_virtualenv || return 1
+    else
+        echoerror "Must have virtualenv dir specified for -a installs"
     fi
 
     requirements_file=$1
@@ -1843,7 +1847,6 @@ __enable_universe_repository() {
     return 0
 }
 
-
 install_ubuntu_deps() {
     if ([ "${__DEFAULT_SLEEP}" -eq "${__DEFAULT_SLEEP_ORIGINAL}" ] && [ "$DISTRO_MAJOR_VERSION" -lt 15 ]); then
         # The user did not pass a custom sleep value as an argument, let's increase the default value
@@ -1871,10 +1874,12 @@ install_ubuntu_deps() {
 
     __enable_universe_repository || return 1
 
+    __PIP_PACKAGES=""
+
     # Minimal systems might not have upstart installed, install it
     __PACKAGES="upstart"
 
-    if [ "$_INSTALL_2_VIRTUALENV" != "null" ]; then
+    if [ "$_VIRTUALENV_DIR" != "null" ]; then
         __PACKAGES="${__PACKAGES} python-virtualenv"
     fi
     # Need python-apt for managing packages via Salt
@@ -1895,6 +1900,7 @@ install_ubuntu_deps() {
             add-apt-repository "ppa:chris-lea/python-crypto" || return 1
         fi
     fi
+
     __PACKAGES="${__PACKAGES} python-requests"
 
     if [ "$DISTRO_MAJOR_VERSION" -gt 12 ] || ([ "$DISTRO_MAJOR_VERSION" -eq 12 ] && [ "$DISTRO_MINOR_VERSION" -gt 03 ]); then
@@ -1922,7 +1928,7 @@ install_ubuntu_deps() {
 
     if [ "${__PIP_PACKAGES}" != "" ]; then
         # shellcheck disable=SC2086,SC2090
-        if [ "$_INSTALL_2_VIRTUALENV" != "null" ]; then
+        if [ "$_VIRTUALENV_DIR" != "null" ]; then
             __activate_virtualenv
         fi
         pip install -U ${__PIP_PACKAGES}
@@ -1943,6 +1949,7 @@ install_ubuntu_deps() {
 
 install_ubuntu_stable_deps() {
     install_ubuntu_deps || return 1
+
     # Alternate PPAs: salt16, salt17, salt2014-1, salt2014-7
     if [ ! "$(echo "$STABLE_REV" | egrep '^(1\.6|1\.7)$')" = "" ]; then
       STABLE_PPA="saltstack/salt$(echo "$STABLE_REV" | tr -d .)"
@@ -1971,7 +1978,7 @@ install_ubuntu_stable_deps() {
         # shellcheck disable=SC2086
         __apt_get_install_noinput $__PACKAGES
         # Activate virtualenv before install
-        if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
+        if [ "${_VIRTUALENV_DIR}" != "null" ]; then
             __activate_virtualenv || return 1
         fi
         pip install -U "${__REQUIRED_TORNADO}"
@@ -1982,6 +1989,7 @@ install_ubuntu_stable_deps() {
 
 install_ubuntu_daily_deps() {
     install_ubuntu_deps || return 1
+
     if [ "$DISTRO_MAJOR_VERSION" -ge 12 ]; then
         # Above Ubuntu 11.10 add-apt-repository is in a different package
         __apt_get_install_noinput software-properties-common || return 1
@@ -2038,7 +2046,7 @@ install_ubuntu_git_deps() {
                 fi
                 # shellcheck disable=SC2086
                 __apt_get_install_noinput $__PACKAGES || return 1
-                if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
+                if [ "${_VIRTUALENV_DIR}" != "null" ]; then
                     __activate_virtualenv || return 1
                 fi
                 pip install -U "${__REQUIRED_TORNADO}"
@@ -2078,7 +2086,7 @@ install_ubuntu_daily() {
 
 install_ubuntu_git() {
     # Activate virtualenv before install
-    if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
+    if [ "${_VIRTUALENV_DIR}" != "null" ]; then
         __activate_virtualenv || return 1
     fi
 
@@ -2118,20 +2126,16 @@ install_ubuntu_git_post() {
                 echowarn "Upstart does not appear to know about salt-$fname"
                 echodebug "Copying ${__SALT_GIT_CHECKOUT_DIR}/pkg/salt-$fname.upstart to $_upstart_conf"
                 copyfile "${__SALT_GIT_CHECKOUT_DIR}/pkg/salt-${fname}.upstart" $_upstart_conf
-                # Set service to know about virtualenv
-                if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
-                    echo "SALT_USE_VIRTUALENV=${_INSTALL_2_VIRTUALENV}" > /etc/default/salt-${fname}
-                fi
+            fi
+            # Set upstart to know about virtualenv
+            if [ "${_VIRTUALENV_DIR}" != "null" ]; then
+                echo "SALT_USE_VIRTUALENV=${_VIRTUALENV_DIR}" > /etc/default/salt-${fname}
             fi
         # No upstart support in Ubuntu!?
         elif [ -f "${__SALT_GIT_CHECKOUT_DIR}/debian/salt-${fname}.init" ]; then
             echodebug "There's NO upstart support!?"
             echodebug "Copying ${__SALT_GIT_CHECKOUT_DIR}/debian/salt-${fname}.init to /etc/init.d/salt-$fname"
             copyfile "${__SALT_GIT_CHECKOUT_DIR}/debian/salt-${fname}.init" "/etc/init.d/salt-$fname"
-            # Set service to know about virtualenv
-            if [ "${_INSTALL_2_VIRTUALENV}" != "null" ]; then
-                echo "SALT_USE_VIRTUALENV=${_INSTALL_2_VIRTUALENV}" > /etc/default/salt-${fname}
-            fi
             chmod +x /etc/init.d/salt-$fname
 
             # Skip salt-api since the service should be opt-in and not necessarily started on boot
