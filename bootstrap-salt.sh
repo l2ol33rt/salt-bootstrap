@@ -290,9 +290,10 @@ usage() {
   -Z  Enable external software source for newer ZeroMQ(Only available for RHEL/CentOS/Fedora/Ubuntu based distributions)
   -b  Assume that dependencies are already installed and software sources are set up.
       If git is selected, git tree is still checked out as dependency step.
-  -V  Install salt into virtualenv (Assumes -P)(Only available for Ubuntu base distributions)
-  -a  Install all python pkg dependencies for salt via pip (Assumes -P). If combined with -V it will install all
-      dependencies into the virtualenv(Only available for Ubuntu base distributions)
+  -V  Install salt into virtualenv(Only available for Ubuntu base distributions)
+  -a  Install all python pkg dependencies for salt via pip. Requires -V to
+      install all pip pkgs into the virtualenv(Only available for Ubuntu base
+      distributions)
 
 EOT
 }   # ----------  end of function usage  ----------
@@ -334,11 +335,7 @@ do
          fi
          ;;
     V )  _INSTALL_2_VIRTUALENV="$OPTARG"
-         if [ -d "$_INSTALL_2_VIRTUALENV" ]; then
-             echoerror "The directory ${_INSTALL_2_VIRTUALENV} for virtualenv already exists"
-             exit 1
-         fi
-         _PIP_ALLOWED=$BS_TRUE
+
          ;;
     a )  _PIP_ALL=$BS_TRUE                              ;;
     M )  _INSTALL_MASTER=$BS_TRUE                       ;;
@@ -504,6 +501,19 @@ fi
 if [ ${_DISABLE_SALT_CHECKS} -eq 0 ]; then
     [ -f /tmp/disable_salt_checks ] && _DISABLE_SALT_CHECKS=$BS_TRUE && \
         echowarn "Found file: /tmp/disable_salt_checks, setting \$_DISABLE_SALT_CHECKS=true"
+fi
+
+# Because -a can only be installed into virtualenv
+if ([ $_PIP_ALL -eq $BS_TRUE ] && [ $_INSTALL_2_VIRTUALENV = "null" ]); then
+    # Could possibly set up a default virtualenv location when -a flag is passed
+    echoerror "-V(virtualenv) dir required for -a (pip pkg) installs"
+    exit 1
+fi
+
+# Make sure virtualenv directory does not already exist
+if [ -d "$_INSTALL_2_VIRTUALENV" ]; then
+    echoerror "The directory ${_INSTALL_2_VIRTUALENV} for virtualenv already exists"
+    exit 1
 fi
 
 echoinfo "${CALLER} ${0} -- Version ${__ScriptVersion}"
@@ -1715,7 +1725,7 @@ __install_pip_deps() {
 
     requirements_file=$1
     if [ ! -f "${requirements_file}" ]; then
-        echoerror "Requirements file: ${requirements_file} does not exist, needed for -a (pip pkg) installs"
+        echoerror "Requirements file: ${requirements_file} cannot be found, needed for -a (pip pkg) installs"
         exit 1
     fi
 
@@ -2012,7 +2022,7 @@ install_ubuntu_git_deps() {
         # Get just the apt packages that are required to build all the pythons
         __apt_get_install_noinput $__PACKAGES || return 1
         # Install the pythons from requirements (only zmq for now)
-        install_pip_deps "${__SALT_GIT_CHECKOUT_DIR}/requirements/zeromq.txt" || return 1
+        __install_pip_deps "${__SALT_GIT_CHECKOUT_DIR}/requirements/zeromq.txt" || return 1
     else
         install_ubuntu_deps || return 1
         __apt_get_install_noinput python-yaml python-m2crypto python-crypto \
