@@ -354,8 +354,6 @@ do
          ;;
     s )  __DEFAULT_SLEEP="$OPTARG"                      ;;
     V )  _VIRTUALENV_DIR="$OPTARG"                      ;;
-
-         ;;
     a )  _PIP_ALL=$BS_TRUE                              ;;
     M )  _INSTALL_MASTER=$BS_TRUE                       ;;
     S )  _INSTALL_SYNDIC=$BS_TRUE                       ;;
