@@ -2129,7 +2129,6 @@ install_ubuntu_stable_deps() {
             pip install -U virtualenv
             __activate_virtualenv || return 1
         fi
-        pip install -U "${__REQUIRED_TORNADO}"
     fi
 
     apt-get update
