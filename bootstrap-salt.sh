@@ -2117,7 +2117,11 @@ install_ubuntu_stable_deps() {
         else
             add-apt-repository "ppa:$STABLE_PPA" || return 1
         fi
-        __PACKAGES="${__PACKAGES} python-dev"
+
+        if [ "$_PIP_ALLOWED" -eq $BS_TRUE ] || [ "$_PIP_ALL" -eq $BS_TRUE ]; then
+            __PACKAGES="${__PACKAGES} python-dev"
+        fi
+
         # shellcheck disable=SC2086
         __apt_get_install_noinput $__PACKAGES
         # Activate virtualenv before install
