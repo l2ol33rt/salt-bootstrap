@@ -1353,16 +1353,16 @@ if [ "${ITYPE}" = "testing" ]; then
 fi
 
 # Only Ubuntu has support for installing to virtualenvs
-if ([ "${DISTRO_NAME_L}" != "ubuntu" ] && [ "$_VIRTUALENV_DIR" != "null" ]); then
-    echoerror "${DISTRO_NAME} does not have -V support"
-    exit 1
-fi
+#if ([ "${DISTRO_NAME_L}" != "ubuntu" ] && [ "$_VIRTUALENV_DIR" != "null" ]); then
+#    echoerror "${DISTRO_NAME} does not have -V support"
+#    exit 1
+#fi
 
 # Only Ubuntu has support for pip installing all packages
-if ([ "${DISTRO_NAME_L}" != "ubuntu" ] && [ $_PIP_ALL -eq $BS_TRUE ]);then
-    echoerror "${DISTRO_NAME} does not have -a support"
-    exit 1
-fi
+#if ([ "${DISTRO_NAME_L}" != "ubuntu" ] && [ $_PIP_ALL -eq $BS_TRUE ]);then
+#    echoerror "${DISTRO_NAME} does not have -a support"
+#    exit 1
+#fi
 #---  FUNCTION  -------------------------------------------------------------------------------------------------------
 #          NAME:  __function_defined
 #   DESCRIPTION:  Checks if a function is defined within this scripts scope
