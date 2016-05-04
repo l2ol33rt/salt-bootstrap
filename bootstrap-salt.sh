@@ -2567,6 +2567,10 @@ install_debian_deps() {
     __PACKAGES="procps pciutils"
     __PIP_PACKAGES=""
 
+    if [ "$_VIRTUALENV_DIR" != "null" ]; then
+        __PACKAGES="${__PACKAGES} python-virtualenv"
+    fi
+
     if [ "$DISTRO_MAJOR_VERSION" -lt 6 ]; then
         # Both python-requests which is a hard dependency and apache-libcloud which is a soft dependency, under debian < 6
         # need to be installed using pip
@@ -2578,6 +2582,10 @@ install_debian_deps() {
 
     # shellcheck disable=SC2086
     __apt_get_install_noinput ${__PACKAGES} || return 1
+
+    if [ "$_VIRTUALENV_DIR" != "null" ]; then
+        __activate_virtualenv || return 1
+    fi
 
     if [ "$_INSTALL_CLOUD" -eq $BS_TRUE ]; then
         # shellcheck disable=SC2089
@@ -2831,12 +2839,17 @@ install_debian_8_deps() {
     fi
 
     apt-get update || return 1
-    __PACKAGES="libzmq3 libzmq3-dev python-zmq python-requests python-apt"
 
     # Additionally install procps and pciutils which allows for Docker bootstraps. See 366#issuecomment-39666813
-    __PACKAGES="${__PACKAGES} procps pciutils"
+    __PACKAGES="procps pciutils"
 
-    if [ "$_INSTALL_CLOUD" -eq $BS_TRUE ]; then
+    if [ ${_PIP_ALL} -eq $BS_TRUE ]; then
+        __PACKAGES="${__PACKAGES} libzmq3 libzmq3-dev python-pip"
+    else
+        __PACKAGES="${__PACKAGES} libzmq3 libzmq3-dev python-zmq python-requests python-apt"
+    fi
+
+    if [ "$_INSTALL_CLOUD" -eq $BS_TRUE ] && [ ${_PIP_ALL} -ne $BS_TRUE ]; then
         # Install python-libcloud if asked to
         __PACKAGES="${__PACKAGES} python-libcloud"
     fi
@@ -2960,21 +2973,38 @@ install_debian_8_git_deps() {
         __apt_get_install_noinput git || return 1
     fi
 
-    if [ "$(dpkg-query -l 'python-zmq')" = "" ]; then
-        __apt_get_install_noinput libzmq3 libzmq3-dev python-zmq || return 1
-    fi
-
-    __apt_get_install_noinput lsb-release python python-pkg-resources python-crypto \
-        python-jinja2 python-m2crypto python-yaml msgpack-python python-pip || return 1
-
     __git_clone_and_checkout || return 1
 
-    if [ -f "${_SALT_GIT_CHECKOUT_DIR}/requirements/base.txt" ]; then
-        # We're on the develop branch, install tornado
-        __REQUIRED_TORNADO="$(grep tornado "${_SALT_GIT_CHECKOUT_DIR}/requirements/base.txt")"
-        if [ "${__REQUIRED_TORNADO}" != "" ]; then
-            __apt_get_install_noinput python-tornado
+    __PACKAGES=""
+    if [ ${_PIP_ALL} -eq $BS_TRUE ]; then
+        __PACKAGES="${__PACKAGES} python-dev swig libssl-dev libzmq3 libzmq3-dev"
+        if ! __check_command_exists pip; then
+            __PACKAGES="${__PACKAGES} python-setuptools python-pip"
         fi
+        # Get just the apt packages that are required to build all the pythons
+        __apt_get_install_noinput ${__PACKAGES} || return 1
+        # Install the pythons from requirements (only zmq for now)
+        __install_pip_deps "${_SALT_GIT_CHECKOUT_DIR}/requirements/zeromq.txt" || return 1
+    else
+        if [ "$_VIRTUALENV_DIR" != "null" ]; then
+            __PACKAGES="${__PACKAGES} python-virtualenv"
+        fi
+        if [ "$(dpkg-query -l 'python-zmq')" = "" ]; then
+            __PACKAGES="${__PACKAGES} libzmq3 libzmq3-dev python-zmq"
+        fi
+
+        __PACKAGES="${__PACKAGES} lsb-release python python-pkg-resources python-crypto \
+            python-jinja2 python-m2crypto python-yaml msgpack-python python-pip"
+
+        if [ -f "${_SALT_GIT_CHECKOUT_DIR}/requirements/base.txt" ]; then
+            # We're on the develop branch, install tornado
+            __REQUIRED_TORNADO="$(grep tornado "${_SALT_GIT_CHECKOUT_DIR}/requirements/base.txt")"
+            if [ "${__REQUIRED_TORNADO}" != "" ]; then
+                __PACKAGES="${__PACKAGES} python-tornado"
+            fi
+        fi
+        __apt_get_install_noinput ${__PACKAGES} || return 1
+        __activate_virtualenv || return 1
     fi
 
     # Let's trigger config_salt()
@@ -3063,6 +3093,9 @@ install_debian_git_post() {
         if [ -f /bin/systemctl ]; then
             if [ ! -f /etc/systemd/system/salt-${fname}.service ] || ([ -f /etc/systemd/system/salt-${fname}.service ] && [ $_FORCE_OVERWRITE -eq $BS_TRUE ]); then
                 __copyfile "${_SALT_GIT_CHECKOUT_DIR}/pkg/salt-${fname}.service" /etc/systemd/system
+                if [ "$_VIRTUALENV_DIR" != "null" ]; then
+                    sed -i -r 's|(ExecStart=).*('salt-${fname}')|\1'"$_VIRTUALENV_DIR"'/bin/\2|' /etc/systemd/system/salt-${fname}.service
+                fi
             fi
 
             # Skip salt-api since the service should be opt-in and not necessarily started on boot
