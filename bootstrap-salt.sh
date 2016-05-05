@@ -2762,7 +2762,13 @@ install_debian_7_deps() {
     __fetch_verify http://debian.saltstack.com/debian-salt-team-joehealy.gpg.key 267d1f152d0cc94b23eb4c6993ba3d67 3100 | apt-key add - || return 1
 
     apt-get update || return 1
-    __apt_get_install_noinput -t wheezy-backports libzmq3 libzmq3-dev python-zmq python-apt || return 1
+
+    if [ ${_PIP_ALL} -eq $BS_TRUE ]; then
+        __apt_get_install_noinput -t wheezy-backports libzmq3 libzmq3-dev python-pip || return 1
+    else
+        __apt_get_install_noinput -t wheezy-backports libzmq3 libzmq3-dev python-zmq python-apt || return 1
+    fi
+
     # Install procps and pciutils which allows for Docker bootstraps. See 366#issuecomment-39666813
     __PACKAGES="procps pciutils"
     # Also install python-requests
@@ -2770,8 +2776,7 @@ install_debian_7_deps() {
     # shellcheck disable=SC2086
     __apt_get_install_noinput ${__PACKAGES} || return 1
 
-
-    if [ "$_INSTALL_CLOUD" -eq $BS_TRUE ]; then
+    if [ "$_INSTALL_CLOUD" -eq $BS_TRUE ] && [ ${_PIP_ALL} -ne $BS_TRUE ]; then
         __PACKAGES="build-essential python-dev python-pip"
         # shellcheck disable=SC2086
         __apt_get_install_noinput ${__PACKAGES} || return 1
@@ -2886,18 +2891,35 @@ install_debian_git_deps() {
         __apt_get_install_noinput git || return 1
     fi
 
-    __apt_get_install_noinput lsb-release python python-pkg-resources python-crypto \
-        python-jinja2 python-m2crypto python-yaml msgpack-python python-pip || return 1
-
     __git_clone_and_checkout || return 1
 
-    if [ -f "${_SALT_GIT_CHECKOUT_DIR}/requirements/base.txt" ]; then
-        # We're on the develop branch, install whichever tornado is on the requirements file
-        __REQUIRED_TORNADO="$(grep tornado "${_SALT_GIT_CHECKOUT_DIR}/requirements/base.txt")"
-        if [ "${__REQUIRED_TORNADO}" != "" ]; then
-            __check_pip_allowed "You need to allow pip based installations (-P) in order to install the python package '${__REQUIRED_TORNADO}'"
-            __apt_get_install_noinput python-dev
-            pip install -U "${__REQUIRED_TORNADO}" || return 1
+    __PACKAGES=""
+    if [ ${_PIP_ALL} -eq $BS_TRUE ]; then
+        __PACKAGES="${__PACKAGES} python-dev swig libssl-dev libzmq3 libzmq3-dev"
+        if ! __check_command_exists pip; then
+            __PACKAGES="${__PACKAGES} python-setuptools python-pip"
+        fi
+        # Get just the apt packages that are required to build all the pythons
+        __apt_get_install_noinput ${__PACKAGES} || return 1
+        # Install the pythons from requirements (only zmq for now)
+        __install_pip_deps "${_SALT_GIT_CHECKOUT_DIR}/requirements/zeromq.txt" || return 1
+    else
+        if [ "$_VIRTUALENV_DIR" != "null" ]; then
+            __apt_get_install_noinput python-virtualenv || return 1
+            __activate_virtualenv || return 1
+        fi
+
+        __apt_get_install_noinput ${__PACKAGES} lsb-release python python-pkg-resources python-crypto \
+            python-jinja2 python-m2crypto python-yaml msgpack-python python-pip || return 1
+
+        if [ -f "${_SALT_GIT_CHECKOUT_DIR}/requirements/base.txt" ]; then
+            # We're on the develop branch, install whichever tornado is on the requirements file
+            __REQUIRED_TORNADO="$(grep tornado "${_SALT_GIT_CHECKOUT_DIR}/requirements/base.txt")"
+            if [ "${__REQUIRED_TORNADO}" != "" ]; then
+                __check_pip_allowed "You need to allow pip based installations (-P) in order to install the python package '${__REQUIRED_TORNADO}'"
+                __apt_get_install_noinput python-dev
+                pip install -U "${__REQUIRED_TORNADO}" || return 1
+            fi
         fi
     fi
 
@@ -3119,6 +3141,9 @@ install_debian_git_post() {
             if [ ! -f "/etc/init.d/salt-$fname" ]; then
                 echowarn "The init script for salt-$fname was not found, skipping it..."
                 continue
+            fi
+            if [ "${_VIRTUALENV_DIR}" != "null" ]; then
+                echo "DAEMON=${_VIRTUALENV_DIR}/bin/salt-${fname}" > /etc/default/salt-${fname}
             fi
             chmod +x "/etc/init.d/salt-$fname"
 
