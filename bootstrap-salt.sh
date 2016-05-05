@@ -2987,24 +2987,30 @@ install_debian_8_git_deps() {
         __install_pip_deps "${_SALT_GIT_CHECKOUT_DIR}/requirements/zeromq.txt" || return 1
     else
         if [ "$_VIRTUALENV_DIR" != "null" ]; then
-            __PACKAGES="${__PACKAGES} python-virtualenv"
+            __apt_get_install_noinput python-virtualenv || return 1
+            __activate_virtualenv || return 1
         fi
         if [ "$(dpkg-query -l 'python-zmq')" = "" ]; then
             __PACKAGES="${__PACKAGES} libzmq3 libzmq3-dev python-zmq"
         fi
 
-        __PACKAGES="${__PACKAGES} lsb-release python python-pkg-resources python-crypto \
-            python-jinja2 python-m2crypto python-yaml msgpack-python python-pip"
+        __apt_get_install_noinput ${__PACKAGES} lsb-release python python-pkg-resources python-crypto \
+            python-jinja2 python-m2crypto python-yaml msgpack-python python-pip
 
         if [ -f "${_SALT_GIT_CHECKOUT_DIR}/requirements/base.txt" ]; then
             # We're on the develop branch, install tornado
             __REQUIRED_TORNADO="$(grep tornado "${_SALT_GIT_CHECKOUT_DIR}/requirements/base.txt")"
             if [ "${__REQUIRED_TORNADO}" != "" ]; then
-                __PACKAGES="${__PACKAGES} python-tornado"
+                __PACKAGES="python-dev"
+                __check_pip_allowed "You need to allow pip based installations (-P) in order to install the python package '${__REQUIRED_TORNADO}'"
+                if ! __check_command_exists pip; then
+                    __PACKAGES="${__PACKAGES} python-setuptools python-pip"
+                fi
+                # shellcheck disable=SC2086
+                __apt_get_install_noinput $__PACKAGES || return 1
+                pip install -U "${__REQUIRED_TORNADO}"
             fi
         fi
-        __apt_get_install_noinput ${__PACKAGES} || return 1
-        __activate_virtualenv || return 1
     fi
 
     # Let's trigger config_salt()
